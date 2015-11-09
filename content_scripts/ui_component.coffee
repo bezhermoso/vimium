@@ -5,12 +5,15 @@ class UIComponent
   iframeFrameId: null
   options: null
   shadowDOM: null
+  styleSheetGetter: null
+  overlayEnabled: false
+  overlay: null
 
   toggleIframeElementClasses: (removeClass, addClass) ->
     @iframeElement.classList.remove removeClass
     @iframeElement.classList.add addClass
 
-  constructor: (iframeUrl, className, @handleMessage) ->
+  constructor: (iframeUrl, className, overlayEnabled, @handleMessage) ->
     DomUtils.documentReady =>
       styleSheet = DomUtils.createElement "style"
       styleSheet.type = "text/css"
@@ -73,6 +76,7 @@ class UIComponent
       continuation?()
 
   activate: (@options = null) ->
+    @showOverlay() if @overlayEnabled
     @postMessage @options, =>
       @toggleIframeElementClasses "vimiumUIComponentHidden", "vimiumUIComponentVisible"
       @iframeElement.focus() if @options?.focus
@@ -80,6 +84,7 @@ class UIComponent
 
   hide: (shouldRefocusOriginalFrame = true) ->
     # We post a non-message (null) to ensure that hide() requests cannot overtake activate() requests.
+    @hideOverlay()
     @postMessage null, =>
       if @showing
         @showing = false
@@ -95,6 +100,18 @@ class UIComponent
               window.focus()
         @options = null
         @postMessage "hidden" # Inform the UI component that it is hidden.
+
+  showOverlay: ->
+    unless @overlay?
+      @overlay = document.createElement 'div'
+      @overlay.className = 'vomnibarBackgroundOverlay'
+      document.body.appendChild @overlay
+    else
+      @overlay.style.display = "block"
+
+  hideOverlay: ->
+    if @overlay?
+      @overlay.style.display = "none"
 
 root = exports ? window
 root.UIComponent = UIComponent
