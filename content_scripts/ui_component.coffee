@@ -9,43 +9,13 @@ class UIComponent
   overlayEnabled: false
   overlay: null
 
-<<<<<<< 89ab8e3784cdd4f0636ed7f127a9d260093ecf33
   toggleIframeElementClasses: (removeClass, addClass) ->
     @iframeElement.classList.remove removeClass
     @iframeElement.classList.add addClass
-=======
-  constructor: (iframeUrl, className, overlayEnabled, @handleMessage) ->
-    @overlayEnabled = overlayEnabled
-
-    styleSheet = DomUtils.createElement "style"
-    styleSheet.type = "text/css"
-    # Default to everything hidden while the stylesheet loads.
-    styleSheet.innerHTML = "iframe {display: none;}"
-
-    # Use an XMLHttpRequest, possibly via the background page, to fetch the stylesheet. This allows us to
-    # catch and recover from failures that we could not have caught when using CSS @include (eg. #1817).
-    UIComponent::styleSheetGetter ?= new AsyncDataFetcher @fetchFileContents "content_scripts/vimium.css"
-    @styleSheetGetter.use (styles) -> styleSheet.innerHTML = styles
-
-
-    @className = className
-    @iframeElement = DomUtils.createElement "iframe"
-    extend @iframeElement,
-      className: className
-      seamless: "seamless"
-    shadowWrapper = DomUtils.createElement "div"
-    # PhantomJS doesn't support createShadowRoot, so guard against its non-existance.
-    @shadowDOM = shadowWrapper.createShadowRoot?() ? shadowWrapper
-    @shadowDOM.appendChild styleSheet
-    @shadowDOM.appendChild @iframeElement
-
-    @showing = true # The iframe is visible now.
-    # Hide the iframe, but don't interfere with the focus.
-    @hide false
->>>>>>> User-defined Vomnibar CSS
 
   constructor: (iframeUrl, className, overlayEnabled, @handleMessage) ->
     DomUtils.documentReady =>
+      @overlayEnabled = overlayEnabled
       styleSheet = DomUtils.createElement "style"
       styleSheet.type = "text/css"
       # Default to everything hidden while the stylesheet loads.
@@ -133,10 +103,14 @@ class UIComponent
         @postMessage "hidden" # Inform the UI component that it is hidden.
 
   showOverlay: ->
+    console.log @overlay
+    console.log "Showing overlay"
     unless @overlay?
       @overlay = document.createElement 'div'
       @overlay.className = 'vomnibarBackgroundOverlay'
-      document.body.appendChild @overlay
+      console.log @overlay
+      document.body.insertBefore(@overlay, document.body.firstChild)
+      #document.body.appendChild @overlay
     else
       @overlay.style.display = "block"
 

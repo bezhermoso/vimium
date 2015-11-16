@@ -280,6 +280,14 @@ chrome.tabs.onUpdated.addListener (tabId, changeInfo, tab) ->
     runAt: "document_start"
   chrome.tabs.insertCSS tabId, cssConf, -> chrome.runtime.lastError
 
+#chrome.tabs.onUpdated.addListener (tabId, changeInfo, tab) ->
+#  return unless changeInfo.status == "loading" # only do this once per URL change
+#  cssConf =
+#    allFrames: true
+#    code: Settings.get("userDefinedVomnibarOverlayCss")
+#    runAt: "document_start"
+#  chrome.tabs.insertCSS tabId, cssConf, -> chrome.runtime.lastError
+
 # Symbolic names for the three browser-action icons.
 ENABLED_ICON = "icons/browser_action_enabled.png"
 DISABLED_ICON = "icons/browser_action_disabled.png"

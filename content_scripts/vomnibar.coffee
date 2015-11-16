@@ -49,7 +49,7 @@ Vomnibar =
   }
 
   init: ->
-    @vomnibarUI ?= new UIComponent "pages/vomnibar.html", "vomnibarFrame", true ->
+    @vomnibarUI ?= new UIComponent "pages/vomnibar.html", "vomnibarFrame", true, ->
 
   # This function opens the vomnibar. It accepts options, a map with the values:
   #   completer   - The completer to fetch results from.
