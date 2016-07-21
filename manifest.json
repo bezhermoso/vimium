@@ -2,7 +2,7 @@
   "manifest_version": 2,
   "name": "Spotlight Vimium",
   "version": "1.57",
-  "description": "An aesthetic variant of Vimium, The Hacker's Browser. This extension simply skins the Vomnibar to the look & feel of macOS's Spotlight, and adds a white, translucent overlay behind it.",
+  "description": "A variant of Vimium, The Hacker's Browser. Modifies Vomnibar to the look & feel of macOS's Spotlight with white overlay behind it.",
   "icons": {  "16": "icons/icon16.png",
               "48": "icons/icon48.png",
              "128": "icons/icon128.png" },
