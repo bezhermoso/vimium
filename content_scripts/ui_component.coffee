@@ -103,12 +103,9 @@ class UIComponent
         @postMessage "hidden" # Inform the UI component that it is hidden.
 
   showOverlay: ->
-    console.log @overlay
-    console.log "Showing overlay"
     unless @overlay?
       @overlay = document.createElement 'div'
       @overlay.className = 'vomnibarBackgroundOverlay'
-      console.log @overlay
       document.body.insertBefore(@overlay, document.body.firstChild)
       #document.body.appendChild @overlay
     else
