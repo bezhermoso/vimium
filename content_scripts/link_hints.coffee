@@ -121,20 +121,21 @@ HintCoordinator =
     @linkHintsMode = @localHints = null
 
 LinkHints =
-  activateMode: (count = 1, mode = OPEN_IN_CURRENT_TAB) ->
+  activateMode: (count = 1, {mode}) ->
+    mode ?= OPEN_IN_CURRENT_TAB
     if 0 < count or mode is OPEN_WITH_QUEUE
       HintCoordinator.prepareToActivateMode mode, (isSuccess) ->
         if isSuccess
           # Wait for the next tick to allow the previous mode to exit.  It might yet generate a click event,
           # which would cause our new mode to exit immediately.
-          Utils.nextTick -> LinkHints.activateMode count-1, mode
+          Utils.nextTick -> LinkHints.activateMode count-1, {mode}
 
-  activateModeToOpenInNewTab: (count) -> @activateMode count, OPEN_IN_NEW_BG_TAB
-  activateModeToOpenInNewForegroundTab: (count) -> @activateMode count, OPEN_IN_NEW_FG_TAB
-  activateModeToCopyLinkUrl: (count) -> @activateMode count, COPY_LINK_URL
-  activateModeWithQueue: -> @activateMode 1, OPEN_WITH_QUEUE
-  activateModeToOpenIncognito: (count) -> @activateMode count, OPEN_INCOGNITO
-  activateModeToDownloadLink: (count) -> @activateMode count, DOWNLOAD_LINK_URL
+  activateModeToOpenInNewTab: (count) -> @activateMode count, mode: OPEN_IN_NEW_BG_TAB
+  activateModeToOpenInNewForegroundTab: (count) -> @activateMode count, mode: OPEN_IN_NEW_FG_TAB
+  activateModeToCopyLinkUrl: (count) -> @activateMode count, mode: COPY_LINK_URL
+  activateModeWithQueue: -> @activateMode 1, mode: OPEN_WITH_QUEUE
+  activateModeToOpenIncognito: (count) -> @activateMode count, mode: OPEN_INCOGNITO
+  activateModeToDownloadLink: (count) -> @activateMode count, mode: DOWNLOAD_LINK_URL
 
 class LinkHintsMode
   hintMarkerContainingDiv: null
@@ -393,14 +394,17 @@ class LinkHintsMode
             clickActivator = (modifiers) -> (link) -> DomUtils.simulateClick link, modifiers
             linkActivator = @mode.linkActivator ? clickActivator @mode.clickModifiers
             # TODO: Are there any other input elements which should not receive focus?
-            if clickEl.nodeName.toLowerCase() == "input" and clickEl.type not in ["button", "submit"]
+            if clickEl.nodeName.toLowerCase() in ["input", "select"] and clickEl.type not in ["button", "submit"]
               clickEl.focus()
             linkActivator clickEl
 
     installKeyboardBlocker = (startKeyboardBlocker) ->
       if linkMatched.isLocalMarker
-        flashEl = DomUtils.addFlashRect linkMatched.rect
-        HintCoordinator.onExit.push -> DomUtils.removeElement flashEl
+        {top: viewportTop, left: viewportLeft} = DomUtils.getViewportTopLeft()
+        for rect in (Rect.copy rect for rect in clickEl.getClientRects())
+          extend rect, top: rect.top + viewportTop, left: rect.left + viewportLeft
+          flashEl = DomUtils.addFlashRect rect
+          do (flashEl) -> HintCoordinator.onExit.push -> DomUtils.removeElement flashEl
 
       if windowIsFocused()
         startKeyboardBlocker (isSuccess) -> HintCoordinator.sendMessage "exit", {isSuccess}
@@ -440,7 +444,7 @@ class LinkHintsMode
 # Use characters for hints, and do not filter links by their text.
 class AlphabetHints
   constructor: ->
-    @linkHintCharacters = Settings.get "linkHintCharacters"
+    @linkHintCharacters = Settings.get("linkHintCharacters").toLowerCase()
     # We use the keyChar from keydown if the link-hint characters are all "a-z0-9".  This is the default
     # settings value, and preserves the legacy behavior (which always used keydown) for users which are
     # familiar with that behavior.  Otherwise, we use keyChar from keypress, which admits non-Latin
@@ -622,7 +626,9 @@ LocalHints =
   # image), therefore we always return a array of element/rect pairs (which may also be a singleton or empty).
   #
   getVisibleClickable: (element) ->
-    tagName = element.tagName.toLowerCase()
+    # Get the tag name.  However, `element.tagName` can be an element (not a string, see #2305), so we guard
+    # against that.
+    tagName = element.tagName.toLowerCase?() ? ""
     isClickable = false
     onlyHasTabIndex = false
     possibleFalsePositive = false
@@ -811,9 +817,10 @@ LocalHints =
         nonOverlappingElements.push visibleElement unless visibleElement.secondClassCitizen
 
     # Position the rects within the window.
+    {top, left} = DomUtils.getViewportTopLeft()
     for hint in nonOverlappingElements
-      hint.rect.top += window.scrollY
-      hint.rect.left += window.scrollX
+      hint.rect.top += top
+      hint.rect.left += left
 
     if Settings.get "filterLinkHints"
       @withLabelMap (labelMap) =>

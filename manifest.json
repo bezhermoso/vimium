@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "name": "Spotlight Vimium",
-  "version": "1.57",
+  "version": "1.58.2",
   "description": "A variant of Vimium, The Hacker's Browser. Modifies Vomnibar to the look & feel of macOS's Spotlight with white overlay behind it.",
   "icons": {  "16": "icons/icon16.png",
               "48": "icons/icon48.png",
@@ -35,6 +35,8 @@
   ],
   "content_scripts": [
     {
+      "_comment":
+        "IMPORTANT: All resources listed here must also be listed in ./pages/vimium_resources.html.",
       "matches": ["<all_urls>"],
       "js": ["lib/utils.js",
              "lib/keyboard_utils.js",
@@ -58,7 +60,8 @@
             ],
       "css": ["content_scripts/vimium.css"],
       "run_at": "document_start",
-      "all_frames": true
+      "all_frames": true,
+      "match_about_blank": true
     },
     {
       "matches": ["file:///", "file:///*/"],

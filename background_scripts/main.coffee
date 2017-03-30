@@ -18,7 +18,6 @@ chrome.runtime.onInstalled.addListener ({ reason }) ->
         for file in files
           func tab.id, { file: file, allFrames: contentScripts.all_frames }, checkLastRuntimeError
 
-currentVersion = Utils.getCurrentVersion()
 frameIdsForTab = {}
 portsForTab = {}
 root.urlForTab = {}
@@ -67,12 +66,12 @@ chrome.runtime.onConnect.addListener (port) ->
   if (portHandlers[port.name])
     port.onMessage.addListener portHandlers[port.name] port.sender, port
 
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) ->
+chrome.runtime.onMessage.addListener (request, sender, sendResponse) ->
   request = extend {count: 1, frameId: sender.frameId}, extend request, tab: sender.tab, tabId: sender.tab.id
-  if (sendRequestHandlers[request.handler])
-    sendResponse(sendRequestHandlers[request.handler](request, sender))
-  # Ensure the sendResponse callback is freed.
-  return false)
+  if sendRequestHandlers[request.handler]
+    sendResponse sendRequestHandlers[request.handler] request, sender
+  # Ensure that the sendResponse callback is freed.
+  false
 
 onURLChange = (details) ->
   chrome.tabs.sendMessage details.tabId, name: "checkEnabledAfterURLChange"
@@ -80,56 +79,6 @@ onURLChange = (details) ->
 # Re-check whether Vimium is enabled for a frame when the url changes without a reload.
 chrome.webNavigation.onHistoryStateUpdated.addListener onURLChange # history.pushState.
 chrome.webNavigation.onReferenceFragmentUpdated.addListener onURLChange # Hash changed.
-
-# Retrieves the help dialog HTML template from a file, and populates it with the latest keybindings.
-getHelpDialogHtml = ({showUnboundCommands, showCommandNames, customTitle}) ->
-  commandsToKey = {}
-  for own key of Commands.keyToCommandRegistry
-    command = Commands.keyToCommandRegistry[key].command
-    commandsToKey[command] = (commandsToKey[command] || []).concat(key)
-
-  replacementStrings =
-    version: currentVersion
-    title: customTitle || "Help"
-    tip: if showCommandNames then "Tip: click command names to yank them to the clipboard." else "&nbsp;"
-
-  for own group of Commands.commandGroups
-    replacementStrings[group] =
-        helpDialogHtmlForCommandGroup(group, commandsToKey, Commands.availableCommands,
-                                      showUnboundCommands, showCommandNames)
-
-  replacementStrings
-
-#
-# Generates HTML for a given set of commands. commandGroups are defined in commands.js
-#
-helpDialogHtmlForCommandGroup = (group, commandsToKey, availableCommands,
-    showUnboundCommands, showCommandNames) ->
-  html = []
-  for command in Commands.commandGroups[group]
-    keys = commandsToKey[command] || []
-    bindings = ("<span class='vimiumHelpDialogKey'>#{Utils.escapeHtml key}</span>" for key in keys).join ", "
-    if (showUnboundCommands || commandsToKey[command])
-      isAdvanced = Commands.advancedCommands.indexOf(command) >= 0
-      description = availableCommands[command].description
-      if keys.join(", ").length < 12
-        helpDialogHtmlForCommand html, isAdvanced, bindings, description, showCommandNames, command
-      else
-        # If the length of the bindings is too long, then we display the bindings on a separate row from the
-        # description.  This prevents the column alignment from becoming out of whack.
-        helpDialogHtmlForCommand html, isAdvanced, bindings, "", false, ""
-        helpDialogHtmlForCommand html, isAdvanced, "", description, showCommandNames, command
-  html.join("\n")
-
-helpDialogHtmlForCommand = (html, isAdvanced, bindings, description, showCommandNames, command) ->
-  html.push "<tr class='vimiumReset #{"advanced" if isAdvanced}'>"
-  if description
-    html.push "<td class='vimiumReset'>#{bindings}</td>"
-    html.push "<td class='vimiumReset'></td><td class='vimiumReset vimiumHelpDescription'>", description
-    html.push("(<span class='vimiumReset commandName'>#{command}</span>)") if showCommandNames
-  else
-    html.push "<td class='vimiumReset' colspan='3' style='text-align: left;'>", bindings
-  html.push("</td></tr>")
 
 # Cache "content_scripts/vimium.css" in chrome.storage.local for UI components.
 do ->
@@ -150,7 +99,7 @@ TabOperations =
     tabConfig =
       url: Utils.convertToUrl request.url
       index: request.tab.index + 1
-      selected: true
+      active: true
       windowId: request.tab.windowId
       openerTabId: request.tab.id
     chrome.tabs.create tabConfig, callback
@@ -178,11 +127,11 @@ toggleMuteTab = do ->
 selectSpecificTab = (request) ->
   chrome.tabs.get(request.id, (tab) ->
     chrome.windows.update(tab.windowId, { focused: true })
-    chrome.tabs.update(request.id, { selected: true }))
+    chrome.tabs.update(request.id, { active: true }))
 
 moveTab = ({count, tab, registryEntry}) ->
   count = -count if registryEntry.command == "moveTabLeft"
-  chrome.tabs.getAllInWindow null, (tabs) ->
+  chrome.tabs.query { currentWindow: true }, (tabs) ->
     pinnedCount = (tabs.filter (tab) -> tab.pinned).length
     minIndex = if tab.pinned then 0 else pinnedCount
     maxIndex = (if tab.pinned then pinnedCount else tabs.length) - 1
@@ -196,15 +145,34 @@ mkRepeatCommand = (command) -> (request) ->
 # These are commands which are bound to keystrokes which must be handled by the background page. They are
 # mapped in commands.coffee.
 BackgroundCommands =
+  # Create a new tab.  Also, with:
+  #     map X createTab http://www.bbc.com/news
+  # create a new tab with the given URL.
   createTab: mkRepeatCommand (request, callback) ->
-    request.url ?= do ->
-      url = Settings.get "newTabUrl"
-      if url == "pages/blank.html"
-        # "pages/blank.html" does not work in incognito mode, so fall back to "chrome://newtab" instead.
-        if request.tab.incognito then "chrome://newtab" else chrome.runtime.getURL newTabUrl
+    request.urls ?=
+      if request.url
+        # If the request contains a URL, then use it.
+        [request.url]
       else
-        url
-    TabOperations.openUrlInNewTab request, (tab) -> callback extend request, {tab, tabId: tab.id}
+        # Otherwise, if we have a registryEntry containing URLs, then use them.
+        urlList = (opt for opt in request.registryEntry.optionList when Utils.isUrl opt)
+        if 0 < urlList.length
+          urlList
+        else
+          # Otherwise, just create a new tab.
+          newTabUrl = Settings.get "newTabUrl"
+          if newTabUrl == "pages/blank.html"
+            # "pages/blank.html" does not work in incognito mode, so fall back to "chrome://newtab" instead.
+            [if request.tab.incognito then "chrome://newtab" else chrome.runtime.getURL newTabUrl]
+          else
+            [newTabUrl]
+    urls = request.urls[..].reverse()
+    do openNextUrl = (request) ->
+      if 0 < urls.length
+        TabOperations.openUrlInNewTab (extend request, {url: urls.pop()}), (tab) ->
+          openNextUrl extend request, {tab, tabId: tab.id}
+      else
+        callback request
   duplicateTab: mkRepeatCommand (request, callback) ->
     chrome.tabs.duplicate request.tabId, (tab) -> callback extend request, {tab, tabId: tab.id}
   moveTabToNewWindow: ({count, tab}) ->
@@ -258,7 +226,7 @@ removeTabsRelative = (direction, {tab: activeTab}) ->
 # Selects a tab before or after the currently selected tab.
 # - direction: "next", "previous", "first" or "last".
 selectTab = (direction, {count, tab}) ->
-  chrome.tabs.getAllInWindow null, (tabs) ->
+  chrome.tabs.query { currentWindow: true }, (tabs) ->
     if 1 < tabs.length
       toSelect =
         switch direction
@@ -270,7 +238,7 @@ selectTab = (direction, {count, tab}) ->
             Math.min tabs.length - 1, count - 1
           when "last"
             Math.max 0, tabs.length - count
-      chrome.tabs.update tabs[toSelect].id, selected: true
+      chrome.tabs.update tabs[toSelect].id, active: true
 
 chrome.tabs.onUpdated.addListener (tabId, changeInfo, tab) ->
   return unless changeInfo.status == "loading" # Only do this once per URL change.
@@ -320,7 +288,7 @@ Frames =
 
     # Return our onMessage handler for this port.
     (request, port) =>
-      this[request.handler] {request, tabId, frameId, port}
+      this[request.handler] {request, tabId, frameId, port, sender}
 
   registerFrame: ({tabId, frameId, port}) ->
     frameIdsForTab[tabId].push frameId unless frameId in frameIdsForTab[tabId] ?= []
@@ -361,6 +329,9 @@ Frames =
 
   linkHintsMessage: ({request, tabId, frameId}) ->
     HintCoordinator.onMessage tabId, frameId, request
+
+  # For debugging only. This allows content scripts to log messages to the extension's logging page.
+  log: ({frameId, sender, request: {message}}) -> BgUtils.log "#{frameId} #{message}", sender
 
 handleFrameFocused = ({tabId, frameId}) ->
   frameIdsForTab[tabId] ?= []
@@ -435,7 +406,6 @@ portHandlers =
 
 sendRequestHandlers =
   runBackgroundCommand: (request) -> BackgroundCommands[request.registryEntry.command] request
-  getHelpDialogHtml: getHelpDialogHtml
   # getCurrentTabUrl is used by the content scripts to get their full URL, because window.location cannot help
   # with Chrome-specific URLs like "view-source:http:..".
   getCurrentTabUrl: ({tab}) -> tab.url
@@ -453,8 +423,6 @@ sendRequestHandlers =
   gotoMark: Marks.goto.bind(Marks)
   # Send a message to all frames in the current tab.
   sendMessageToFrames: (request, sender) -> chrome.tabs.sendMessage sender.tab.id, request.message
-  # For debugging only. This allows content scripts to log messages to the extension's logging page.
-  log: ({frameId, message}, sender) -> BgUtils.log "#{frameId} #{message}", sender
 
 # We always remove chrome.storage.local/findModeRawQueryListIncognito on startup.
 chrome.storage.local.remove "findModeRawQueryListIncognito"
@@ -481,28 +449,37 @@ window.runTests = -> open(chrome.runtime.getURL('tests/dom_tests/dom_tests.html'
 
 # Show notification on upgrade.
 do showUpgradeMessage = ->
+  currentVersion = Utils.getCurrentVersion()
   # Avoid showing the upgrade notification when previousVersion is undefined, which is the case for new
   # installs.
-  Settings.set "previousVersion", currentVersion  unless Settings.get "previousVersion"
-  if Utils.compareVersions(currentVersion, Settings.get "previousVersion" ) == 1
-    notificationId = "VimiumUpgradeNotification"
-    notification =
-      type: "basic"
-      iconUrl: chrome.runtime.getURL "icons/vimium.png"
-      title: "Vimium Upgrade"
-      message: "Vimium has been upgraded to version #{currentVersion}. Click here for more information."
-      isClickable: true
-    if chrome.notifications?.create?
-      chrome.notifications.create notificationId, notification, ->
-        unless chrome.runtime.lastError
-          Settings.set "previousVersion", currentVersion
-          chrome.notifications.onClicked.addListener (id) ->
-            if id == notificationId
-              chrome.tabs.getSelected null, (tab) ->
-                TabOperations.openUrlInNewTab {tab, tabId: tab.id, url: "https://github.com/philc/vimium#release-notes"}
+  Settings.set "previousVersion", currentVersion  unless Settings.has "previousVersion"
+  previousVersion = Settings.get "previousVersion"
+  if Utils.compareVersions(currentVersion, previousVersion ) == 1
+    currentVersionNumbers = currentVersion.split "."
+    previousVersionNumbers = previousVersion.split "."
+    if currentVersionNumbers[...2].join(".") == previousVersionNumbers[...2].join(".")
+      # We do not show an upgrade message for patch/silent releases.  Such releases have the same major and
+      # minor version numbers.  We do, however, update the recorded previous version.
+      Settings.set "previousVersion", currentVersion
     else
-      # We need to wait for the user to accept the "notifications" permission.
-      chrome.permissions.onAdded.addListener showUpgradeMessage
+      notificationId = "VimiumUpgradeNotification"
+      notification =
+        type: "basic"
+        iconUrl: chrome.runtime.getURL "icons/vimium.png"
+        title: "Vimium Upgrade"
+        message: "Vimium has been upgraded to version #{currentVersion}. Click here for more information."
+        isClickable: true
+      if chrome.notifications?.create?
+        chrome.notifications.create notificationId, notification, ->
+          unless chrome.runtime.lastError
+            Settings.set "previousVersion", currentVersion
+            chrome.notifications.onClicked.addListener (id) ->
+              if id == notificationId
+                chrome.tabs.query { active: true, currentWindow: true }, ([tab]) ->
+                  TabOperations.openUrlInNewTab {tab, tabId: tab.id, url: "https://github.com/philc/vimium#release-notes"}
+      else
+        # We need to wait for the user to accept the "notifications" permission.
+        chrome.permissions.onAdded.addListener showUpgradeMessage
 
 # The install date is shown on the logging page.
 chrome.runtime.onInstalled.addListener ({reason}) ->

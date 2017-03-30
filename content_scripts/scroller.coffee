@@ -128,9 +128,11 @@ checkVisibility = (element) ->
 CoreScroller =
   init: ->
     @time = 0
-    @lastEvent = null
-    @keyIsDown = false
+    @lastEvent = @keyIsDown = null
+    @installCanceEventListener()
 
+  # This installs listeners for events which should cancel smooth scrolling.
+  installCanceEventListener: ->
     # NOTE(smblott) With extreme keyboard configurations, Chrome sometimes does not get a keyup event for
     # every keydown, in which case tapping "j" scrolls indefinitely.  This appears to be a Chrome/OS/XOrg bug
     # of some kind.  See #1549.
@@ -141,11 +143,11 @@ CoreScroller =
           @keyIsDown = true
           @time += 1 unless event.repeat
           @lastEvent = event
-      keyup: =>
+      keyup: (event) =>
         handlerStack.alwaysContinueBubbling =>
           @keyIsDown = false
           @time += 1
-      blur: =>
+      blur: (event) =>
         handlerStack.alwaysContinueBubbling =>
           @time += 1 if event.target == window
 
@@ -175,7 +177,7 @@ CoreScroller =
     return if @lastEvent?.repeat
 
     activationTime = ++@time
-    myKeyIsStillDown = => @time == activationTime and @keyIsDown
+    myKeyIsStillDown = => @time == activationTime and @keyIsDown ? true
 
     # Store amount's sign and make amount positive; the arithmetic is clearer when amount is positive.
     sign = getSign amount
@@ -188,6 +190,7 @@ CoreScroller =
     totalElapsed = 0.0
     calibration = 1.0
     previousTimestamp = null
+    cancelEventListener = @installCanceEventListener()
 
     animate = (timestamp) =>
       previousTimestamp ?= timestamp
@@ -215,13 +218,14 @@ CoreScroller =
         requestAnimationFrame animate
       else
         # We're done.
+        handlerStack.remove cancelEventListener
         checkVisibility element
 
     # If we've been asked not to be continuous, then we advance time, so the myKeyIsStillDown test always
     # fails.
     ++@time unless continuous
 
-    # Launch animator.
+    # Start scrolling.
     requestAnimationFrame animate
 
 # Scroller contains the two main scroll functions which are used by clients.

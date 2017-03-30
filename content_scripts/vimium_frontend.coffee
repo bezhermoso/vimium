@@ -32,22 +32,29 @@ textInputXPath = (->
 # This is set by Frame.registerFrameId(). A frameId of 0 indicates that this is the top frame in the tab.
 frameId = null
 
-# For debugging only. This logs to the console on the background page.
+# For debugging only. This writes to the Vimium log page, the URL of whichis shown on the console on the
+# background page.
 bgLog = (args...) ->
   args = (arg.toString() for arg in args)
-  chrome.runtime.sendMessage handler: "log", message: args.join " "
+  Frame.postMessage "log", message: args.join " "
 
 # If an input grabs the focus before the user has interacted with the page, then grab it back (if the
 # grabBackFocus option is set).
 class GrabBackFocus extends Mode
+
   constructor: ->
+    exitEventHandler = =>
+      @alwaysContinueBubbling =>
+        @exit()
+        chrome.runtime.sendMessage handler: "sendMessageToFrames", message: name: "userIsInteractingWithThePage"
+
     super
       name: "grab-back-focus"
-      keydown: => @alwaysContinueBubbling => @exit()
+      keydown: exitEventHandler
 
     @push
       _name: "grab-back-focus-mousedown"
-      mousedown: => @alwaysContinueBubbling => @exit()
+      mousedown: exitEventHandler
 
     Settings.use "grabBackFocus", (grabBackFocus) =>
       # It is possible that this mode exits (e.g. due to a key event) before the settings are ready -- in
@@ -62,8 +69,17 @@ class GrabBackFocus extends Mode
         else
           @exit()
 
+    # This mode is active in all frames.  A user might have begun interacting with one frame without other
+    # frames detecting this.  When one GrabBackFocus mode exits, we broadcast a message to inform all
+    # GrabBackFocus modes that they should exit; see #2296.
+    chrome.runtime.onMessage.addListener listener = ({name}) =>
+      if name == "userIsInteractingWithThePage"
+        chrome.runtime.onMessage.removeListener listener
+        @exit() if @modeIsActive
+      false # We will not be calling sendResponse.
+
   grabBackFocus: (element) ->
-    return @continueBubbling unless DomUtils.isEditable element
+    return @continueBubbling unless DomUtils.isFocusable element
     element.blur()
     @suppressEvent
 
@@ -95,10 +111,12 @@ handlerStack.push
 
 class NormalMode extends KeyHandlerMode
   constructor: (options = {}) ->
-    super extend options,
+    defaults =
       name: "normal"
-      indicator: false # There is no mode indicator in normal mode.
+      indicator: false # There is normally no mode indicator in normal mode.
       commandHandler: @commandHandler.bind this
+
+    super extend defaults, options
 
     chrome.storage.local.get "normalModeKeyStateMapping", (items) =>
       @setKeyMapping items.normalModeKeyStateMapping
@@ -106,10 +124,6 @@ class NormalMode extends KeyHandlerMode
     chrome.storage.onChanged.addListener (changes, area) =>
       if area == "local" and changes.normalModeKeyStateMapping?.newValue
         @setKeyMapping changes.normalModeKeyStateMapping.newValue
-
-    # Initialize components which normal mode depends upon.
-    Scroller.init()
-    FindModeHistory.init()
 
   commandHandler: ({command: registryEntry, count}) ->
     count *= registryEntry.options.count ? 1
@@ -128,12 +142,15 @@ class NormalMode extends KeyHandlerMode
     else if registryEntry.background
       chrome.runtime.sendMessage {handler: "runBackgroundCommand", registryEntry, count}
     else
-      Utils.invokeCommandString registryEntry.command, count
+      Utils.invokeCommandString registryEntry.command, count, {registryEntry}
 
 installModes = ->
   # Install the permanent modes. The permanently-installed insert mode tracks focus/blur events, and
   # activates/deactivates itself accordingly.
   normalMode = new NormalMode
+  # Initialize components upon which normal mode depends.
+  Scroller.init()
+  FindModeHistory.init()
   new InsertMode permanent: true
   new GrabBackFocus if isEnabledForUrl
   normalMode # Return the normalMode object (for the tests).
@@ -166,10 +183,12 @@ initializePreDomReady = ->
     linkHintsMessage: (request) -> HintCoordinator[request.messageType] request
 
   chrome.runtime.onMessage.addListener (request, sender, sendResponse) ->
-    # These requests are intended for the background page, but they're delivered to the options page too.
+    # Some requests intended for the background page are delivered to the options page too; ignore them.
     unless request.handler and not request.name
-      if isEnabledForUrl or request.name in ["checkEnabledAfterURLChange", "runInTopFrame"]
-        requestHandlers[request.name] request, sender, sendResponse
+      # Some request are handled elsewhere; ignore them too.
+      unless request.name in ["userIsInteractingWithThePage"]
+        if isEnabledForUrl or request.name in ["checkEnabledAfterURLChange", "runInTopFrame"]
+          requestHandlers[request.name] request, sender, sendResponse
     false # Ensure that the sendResponse callback is freed.
 
 # Wrapper to install event listeners.  Syntactic sugar.
@@ -205,7 +224,7 @@ onFocus = (event) ->
 # We install these listeners directly (that is, we don't use installListener) because we still need to receive
 # events when Vimium is not enabled.
 window.addEventListener "focus", onFocus
-window.addEventListener "hashchange", onFocus
+window.addEventListener "hashchange", checkEnabledAfterURLChange
 
 initializeOnDomReady = ->
   # Tell the background page we're in the domReady state.
@@ -229,9 +248,9 @@ Frame =
         window.removeEventListener "focus", focusHandler
         window.removeEventListener "resize", resizeHandler
         Frame.postMessage "registerFrame"
-      window.addEventListener "focus", focusHandler = ->
+      window.addEventListener "focus", focusHandler = (event) ->
         postRegisterFrame() if event.target == window
-      window.addEventListener "resize", resizeHandler = ->
+      window.addEventListener "resize", resizeHandler = (event) ->
         postRegisterFrame() unless DomUtils.windowIsTooSmall()
 
   init: ->
@@ -365,8 +384,18 @@ extend window,
   enterVisualLineMode: ->
     new VisualLineMode userLaunchedMode: true
 
-  passNextKey: (count) ->
-    new PassNextKeyMode count
+  passNextKey: (count, options) ->
+    if options.registryEntry.options.normal
+      enterNormalMode count
+    else
+      new PassNextKeyMode count
+
+  enterNormalMode: (count) ->
+    new NormalMode
+      indicator: "Normal mode (pass keys disabled)"
+      exitOnEscape: true
+      singleton: "enterNormalMode"
+      count: count
 
   focusInput: do ->
     # Track the most recently focused input element.
@@ -375,7 +404,8 @@ extend window,
       (event) -> recentlyFocusedElement = event.target if DomUtils.isEditable event.target
     , true
 
-    (count, mode = InsertMode) ->
+    (count) ->
+      mode = InsertMode
       # Focus the first input element on the page, and create overlays to highlight all the input elements, with
       # the currently-focused element highlighted specially. Tabbing will shift focus to the next input element.
       # Pressing any other key will remove the overlays and the special tab behavior.
@@ -627,8 +657,7 @@ enterFindMode = ->
   new FindMode()
 
 window.showHelp = (sourceFrameId) ->
-  chrome.runtime.sendMessage handler: "getHelpDialogHtml", (response) ->
-    HelpDialog.toggle {sourceFrameId, html: response}
+  HelpDialog.toggle {sourceFrameId, showAllCommandDetails: false}
 
 # If we are in the help dialog iframe, then HelpDialog is already defined with the necessary functions.
 window.HelpDialog ?=

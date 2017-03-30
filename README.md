@@ -141,7 +141,7 @@ The following special keys are available for mapping:
 - `<c-*>`, `<a-*>`, `<m-*>` for ctrl, alt, and meta (command on Mac) respectively with any key. Replace `*`
   with the key of choice.
 - `<left>`, `<right>`, `<up>`, `<down>` for the arrow keys
-- `<space>` for the space key
+- `<space>` and `<backspace>` for the space and backspace keys
 - `<f1>` through `<f12>` for the function keys
 
 Shifts are automatically detected so, for example, `<c-&>` corresponds to ctrl+shift+7 on an English keyboard.
@@ -159,9 +159,24 @@ Please see [CONTRIBUTING.md](https://github.com/philc/vimium/blob/master/CONTRIB
 Release Notes
 -------------
 
-<!--
-Changes since the previous release (not in the Chrome Store version)
--->
+1.58 (2017-03-08)
+
+- Features:
+    - The `createTab` command can now open specific URLs (e.g, `map X createTab http://www.bbc.com/news`).
+    - With pass keys defined for a site (such as GMail), you can now use Vimium's bindings again with, for example, `map \ passNextKey normal`;
+      this reactivates normal mode temporarily, but *without any pass keys*.
+    - You can now map multi-modifier keys, for example: `<c-a-X>`.
+    - Vimium can now do simple key mapping in some modes; see
+      [here](https://github.com/philc/vimium/wiki/Tips-and-Tricks#key-mapping).
+      This can be helpful with some non-English keyboards (and can also be used
+      to remap `Escape`).
+    - For *Custom key mappings* on the options page, lines which end with `\` are now continued on the following line.
+- Process:
+    - In order to provide faster bug fixes, we may in future push new releases without the noisy notification.
+
+- Post-release minor fixes:
+    - 1.58.1 (2017-03-09) fix bug in `LinkHints.activateModeWithQueue` (#2445).
+    - 1.58.2 (2017-03-19) fix key handling bug (#2453).
 
 1.57 (2016-10-01)
 

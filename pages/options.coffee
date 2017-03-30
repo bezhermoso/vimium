@@ -237,11 +237,10 @@ initOptionsPage = ->
     event.preventDefault()
 
   activateHelpDialog = ->
-    request = showUnboundCommands: true, showCommandNames: true, customTitle: "Command Listing"
-    chrome.runtime.sendMessage extend(request, handler: "getHelpDialogHtml"), (response) ->
-      HelpDialog.toggle {html: response}
+    HelpDialog.toggle showAllCommandDetails: true
 
   saveOptions = ->
+    $("linkHintCharacters").value = $("linkHintCharacters").value.toLowerCase()
     Option.saveOptions()
     $("saveOptions").disabled = true
     $("saveOptions").innerHTML = "No Changes"
@@ -269,7 +268,7 @@ initOptionsPage = ->
   maintainLinkHintsView()
 
 initPopupPage = ->
-  chrome.tabs.getSelected null, (tab) ->
+  chrome.tabs.query { active: true, currentWindow: true }, ([tab]) ->
     exclusions = null
     document.getElementById("optionsLink").setAttribute "href", chrome.runtime.getURL("pages/options.html")
 

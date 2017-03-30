@@ -288,6 +288,16 @@ DomUtils =
     flashEl = @addFlashRect rect
     setTimeout((-> DomUtils.removeElement flashEl), 400)
 
+  getViewportTopLeft: ->
+    box = document.documentElement
+    style = getComputedStyle box
+    if style.position == "static" and not /content|paint|strict/.test(style.contain or "")
+      zoom = +style.zoom || 1
+      top: Math.ceil(window.scrollY / zoom), left: Math.ceil(window.scrollX / zoom)
+    else
+      rect = box.getBoundingClientRect()
+      top: -rect.top - box.clientTop, left: -rect.left - box.clientLeft
+
   suppressPropagation: (event) ->
     event.stopImmediatePropagation()
 
@@ -303,6 +313,7 @@ DomUtils =
         return true unless KeyboardUtils.isEscape event
         @remove()
         false
+    handlerStack.suppressEvent
 
   # Adapted from: http://roysharon.com/blog/37.
   # This finds the element containing the selection focus.
@@ -334,7 +345,7 @@ DomUtils =
   # If the element is rendered in a shadow DOM via a <content> element, the <content> element will be
   # returned, so the shadow DOM is traversed rather than passed over.
   getContainingElement: (element) ->
-    element.getDestinationInsertionPoints()[0] or element.parentElement
+    element.getDestinationInsertionPoints?()[0] or element.parentElement
 
   # This tests whether a window is too small to be useful.
   windowIsTooSmall: ->

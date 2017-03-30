@@ -20,7 +20,6 @@ class KeyHandlerMode extends Mode
 
   # Reset the key state, optionally retaining the count provided.
   reset: (@countPrefix = 0) ->
-    bgLog "Clearing key state: #{@countPrefix} (#{@name})"
     @keyState = [@keyMapping]
 
   constructor: (options) ->
@@ -34,8 +33,24 @@ class KeyHandlerMode extends Mode
       # We cannot track keyup events if we lose the focus.
       blur: (event) => @alwaysContinueBubbling => @keydownEvents = {} if event.target == window
 
+    @mapKeyRegistry = {}
+    Utils.monitorChromeStorage "mapKeyRegistry", (value) => @mapKeyRegistry = value
+
+    if options.exitOnEscape
+      # If we're part way through a command's key sequence, then a first Escape should reset the key state,
+      # and only a second Escape should actually exit this mode.
+      @push
+        _name: "key-handler-escape-listener"
+        keydown: (event) =>
+          if KeyboardUtils.isEscape(event) and not @isInResetState()
+            @reset()
+            DomUtils.suppressKeyupAfterEscape handlerStack
+          else
+            @continueBubbling
+
   onKeydown: (event) ->
     keyChar = KeyboardUtils.getKeyCharString event
+    keyChar = @mapKeyRegistry[keyChar] ? keyChar
     isEscape = KeyboardUtils.isEscape event
     if isEscape and (@countPrefix != 0 or @keyState.length != 1)
       @keydownEvents[event.keyCode] = true
@@ -62,6 +77,7 @@ class KeyHandlerMode extends Mode
 
   onKeypress: (event) ->
     keyChar = KeyboardUtils.getKeyCharString event
+    keyChar = @mapKeyRegistry[keyChar] ? keyChar
     if @isMappedKey keyChar
       @handleKeyChar keyChar
     else if @isCountKey keyChar
@@ -88,10 +104,13 @@ class KeyHandlerMode extends Mode
   # Keystrokes are *never* considered pass keys if the user has begun entering a command.  So, for example, if
   # 't' is a passKey, then the "t"-s of 'gt' and '99t' are neverthless handled as regular keys.
   isPassKey: (keyChar) ->
-    @countPrefix == 0 and @keyState.length == 1 and keyChar in (@passKeys ? "")
+    @isInResetState() and keyChar in (@passKeys ? "")
+
+  isInResetState: ->
+    @countPrefix == 0 and @keyState.length == 1
 
   handleKeyChar: (keyChar) ->
-    bgLog "Handle key #{keyChar} (#{@name})"
+    bgLog "handle key #{keyChar} (#{@name})"
     # A count prefix applies only so long a keyChar is mapped in @keyState[0]; e.g. 7gj should be 1j.
     @countPrefix = 0 unless keyChar of @keyState[0]
     # Advance the key state.  The new key state is the current mappings of keyChar, plus @keyMapping.
@@ -99,9 +118,10 @@ class KeyHandlerMode extends Mode
     if @keyState[0].command?
       command = @keyState[0]
       count = if 0 < @countPrefix then @countPrefix else 1
-      bgLog "Call #{command.command}[#{count}] (#{@name})"
+      bgLog "  invoke #{command.command} count=#{count} "
       @reset()
       @commandHandler {command, count}
+      @exit() if @options.count? and --@options.count <= 0
     @suppressEvent
 
 root = exports ? window
